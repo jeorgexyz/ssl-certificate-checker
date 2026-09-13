@@ -292,40 +292,56 @@ defmodule SslCertificateChecker do
 
   # Fetching
 
-  # The handshake runs in its own process so that verification results sent from
+  # The handshakes run in their own process so that verification results sent from
   # `verify_fun` can never leak into the caller's mailbox, even after a timeout.
   defp fetch_certificate(target, port, cacerts, timeout) do
     task = Task.async(fn -> connect_and_inspect(target, port, cacerts, timeout) end)
 
-    case Task.yield(task, timeout + 1_000) || Task.shutdown(task, :brutal_kill) do
+    # An untrusted chain takes a second handshake, so allow time for two.
+    case Task.yield(task, 2 * timeout + 1_000) || Task.shutdown(task, :brutal_kill) do
       {:ok, result} -> result
       nil -> {:error, :timeout}
     end
   end
 
   defp connect_and_inspect(target, port, cacerts, timeout) do
+    case handshake(target, port, cacerts, timeout, :search_paths) do
+      {:error, reason, events} ->
+        if :path_rejected in events do
+          # No candidate path reaches a trusted root. Accept the chain as sent so the
+          # certificate can still be inspected; its errors will include :unknown_ca.
+          target |> handshake(port, cacerts, timeout, :accept_any_path) |> inspect_connection()
+        else
+          {:error, connect_error(reason)}
+        end
+
+      connected ->
+        inspect_connection(connected)
+    end
+  end
+
+  defp handshake(target, port, cacerts, timeout, path_mode) do
     ref = make_ref()
 
     ssl_options = [
       active: false,
       verify: :verify_peer,
       cacerts: cacerts,
-      # Record every verification failure but let the handshake finish so broken
-      # certificates can still be inspected. No application data is ever sent.
-      verify_fun: {&record_verification_result/3, {self(), ref}},
+      # Failures are returned as values; OTP would otherwise log an alert for every
+      # expected rejection, such as the first handshake with an untrusted chain.
+      log_level: :none,
+      verify_fun: {verify_fun(path_mode), {self(), ref}},
       customize_hostname_check: [
         match_fun: :public_key.pkix_verify_hostname_match_fun(:https)
       ]
     ]
 
-    case :ssl.connect(connect_address(target), port, ssl_options, timeout) do
-      {:ok, socket} ->
-        result = inspect_connection(socket, collect_verification_errors(ref))
-        :ssl.close(socket)
-        result
+    result = :ssl.connect(connect_address(target), port, ssl_options, timeout)
+    events = collect_verification_events(ref)
 
-      {:error, reason} ->
-        {:error, connect_error(reason)}
+    case result do
+      {:ok, socket} -> {:ok, socket, events}
+      {:error, reason} -> {:error, reason, events}
     end
   end
 
@@ -334,36 +350,69 @@ defmodule SslCertificateChecker do
   defp connect_address({:hostname, name}), do: String.to_charlist(name)
   defp connect_address({:ip, ip}), do: ip
 
-  defp record_verification_result(_cert, {:extension, _extension}, state), do: {:unknown, state}
+  # OTP only tries alternative certificate paths, such as past a cross-signed root that
+  # isn't trusted, when a path fails with exactly one of these errors. In :search_paths
+  # mode they're returned as failures so that search happens. Every other problem is
+  # recorded and the handshake continues, so broken certificates can still be inspected.
+  # No application data is ever sent over these connections.
+  @path_search_errors [:unknown_ca, :root_cert_expired]
 
-  defp record_verification_result(_cert, {:bad_cert, reason}, {pid, ref} = state) do
-    send(pid, {ref, verification_error(reason)})
-    {:valid, state}
+  defp verify_fun(path_mode) do
+    fn
+      _cert, {:extension, _extension}, state ->
+        {:unknown, state}
+
+      _cert, {:bad_cert, reason} = error, {pid, ref}
+      when path_mode == :search_paths and reason in @path_search_errors ->
+        send(pid, {ref, :path_rejected})
+        {:fail, error}
+
+      _cert, {:bad_cert, reason}, {pid, ref} = state ->
+        send(pid, {ref, verification_error(reason)})
+        {:valid, state}
+
+      _cert, _valid_or_valid_peer, state ->
+        {:valid, state}
+    end
   end
-
-  defp record_verification_result(_cert, _valid_or_valid_peer, state), do: {:valid, state}
 
   defp verification_error(reason) when is_atom(reason), do: reason
   defp verification_error({reason, _details}) when is_atom(reason), do: reason
   defp verification_error(_reason), do: :unknown_verification_error
 
-  defp collect_verification_errors(ref, errors \\ []) do
+  defp collect_verification_events(ref, events \\ []) do
     receive do
-      {^ref, error} -> collect_verification_errors(ref, [error | errors])
+      {^ref, event} -> collect_verification_events(ref, [event | events])
     after
-      0 -> errors |> Enum.reverse() |> Enum.uniq()
+      0 -> Enum.reverse(events)
     end
   end
 
-  defp inspect_connection(socket, verification_errors) do
-    with {:ok, der} <- :ssl.peercert(socket),
-         {:ok, info} <-
-           :ssl.connection_information(socket, [:protocol, :selected_cipher_suite]) do
-      {:ok, der, info, verification_errors}
-    else
-      {:error, reason} -> {:error, {:tls_handshake_failed, inspect(reason)}}
-    end
+  # Events arrive in validation order; everything up to the last :path_rejected marker
+  # belongs to candidate paths that OTP abandoned.
+  defp final_path_errors(events) do
+    events
+    |> Enum.reverse()
+    |> Enum.take_while(&(&1 != :path_rejected))
+    |> Enum.reverse()
+    |> Enum.uniq()
   end
+
+  defp inspect_connection({:ok, socket, events}) do
+    result =
+      with {:ok, der} <- :ssl.peercert(socket),
+           {:ok, info} <-
+             :ssl.connection_information(socket, [:protocol, :selected_cipher_suite]) do
+        {:ok, der, info, final_path_errors(events)}
+      else
+        {:error, reason} -> {:error, {:tls_handshake_failed, inspect(reason)}}
+      end
+
+    :ssl.close(socket)
+    result
+  end
+
+  defp inspect_connection({:error, reason, _events}), do: {:error, connect_error(reason)}
 
   defp connect_error(:timeout), do: :timeout
   defp connect_error(:nxdomain), do: :nxdomain

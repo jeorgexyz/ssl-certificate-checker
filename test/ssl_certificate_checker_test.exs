@@ -54,6 +54,34 @@ defmodule SslCertificateCheckerTest do
     end
   end
 
+  describe "check/3 with a cross-signed root in the chain" do
+    test "follows the alternative path to the trusted root" do
+      %{port: port, cacerts: cacerts} = TestServer.start(cross_signed_root: true)
+
+      assert {:ok, cert} = check("localhost", port, cacerts: cacerts)
+      assert cert.verification_errors == []
+      assert cert.is_valid
+    end
+
+    test "reports only the errors from the accepted path" do
+      %{port: port, cacerts: cacerts} =
+        TestServer.start(cross_signed_root: true, san: [dNSName: ~c"other.example"])
+
+      assert {:ok, cert} = check("localhost", port, cacerts: cacerts)
+      assert cert.verification_errors == [:hostname_check_failed]
+    end
+
+    test "still reports an untrusted chain when no path reaches a trusted root" do
+      %{port: port} = TestServer.start(cross_signed_root: true)
+      %{cacerts: unrelated_cacerts} = TestServer.start()
+
+      assert {:ok, cert} = check("localhost", port, cacerts: unrelated_cacerts)
+      refute cert.is_valid
+      assert :unknown_ca in cert.verification_errors
+      assert cert.san_domains == ["localhost"]
+    end
+  end
+
   describe "check/3 with a certificate that fails verification" do
     test "reports an untrusted chain" do
       %{port: port} = TestServer.start()
@@ -168,9 +196,14 @@ defmodule SslCertificateCheckerTest do
       assert :hostname_check_failed in cert.verification_errors
     end
 
-    test "expired.badssl.com is reported as expired" do
+    test "expired.badssl.com is reported as expired, not untrusted" do
       assert {:ok, cert} = check("expired.badssl.com")
-      assert :cert_expired in cert.verification_errors
+      assert cert.verification_errors == [:cert_expired]
+    end
+
+    test "untrusted-root.badssl.com is reported as untrusted" do
+      assert {:ok, cert} = check("untrusted-root.badssl.com")
+      assert :unknown_ca in cert.verification_errors
     end
 
     test "unresolvable domains return :nxdomain" do
