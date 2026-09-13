@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-13
+
 ### Security
 - Fixed shell command injection: host names were interpolated into a `/bin/sh -c` command,
   so a host such as `"example.com; <command>"` executed arbitrary commands. Certificates are
@@ -38,6 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Logs go to stderr so they can't corrupt JSON output.
 - `mix.lock` is now committed so CI, Docker, and escript builds are reproducible.
 - CI uses `actions/checkout@v4` and `actions/cache@v4`, and builds the escript and Docker image.
+- CI prints the coverage report in the job log instead of uploading to coveralls.io, which
+  wasn't set up and failed every run. Test helpers are excluded from coverage.
 
 ### Added
 - `verification_errors`, `signature_algorithm`, `key_type`, `key_size`, `tls_version`, and

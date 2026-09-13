@@ -2,8 +2,9 @@
 
 A robust Elixir library for checking and validating SSL/TLS certificates. Get detailed certificate information, expiry warnings, and comprehensive validation with a simple, elegant API.
 
-[![Hex.pm](https://img.shields.io/hexpm/v/ssl_certificate_checker.svg)](https://hex.pm/packages/ssl_certificate_checker)
-[![Documentation](https://img.shields.io/badge/docs-hexdocs-blue.svg)](https://hexdocs.pm/ssl_certificate_checker)
+[![CI](https://github.com/jeorgexyz/ssl-certificate-checker/actions/workflows/ci.yml/badge.svg)](https://github.com/jeorgexyz/ssl-certificate-checker/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/jeorgexyz/ssl-certificate-checker)](https://github.com/jeorgexyz/ssl-certificate-checker/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 <p align="center">
   <img src="docs/images/cli-valid.svg" alt="ssl_certificate_checker github.com: valid certificate, TLSv1.3, exit code 0" width="49%">
@@ -22,12 +23,12 @@ A robust Elixir library for checking and validating SSL/TLS certificates. Get de
 
 ## Installation
 
-Add `ssl_certificate_checker` to your list of dependencies in `mix.exs`:
+The package isn't on Hex.pm yet, so add it to your dependencies in `mix.exs` from GitHub:
 
 ```elixir
 def deps do
   [
-    {:ssl_certificate_checker, "~> 0.2.0"}
+    {:ssl_certificate_checker, github: "jeorgexyz/ssl-certificate-checker", tag: "v0.3.0"}
   ]
 end
 ```
@@ -443,15 +444,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Changelog
 
-### v0.2.0
-- Complete rewrite with improved error handling
-- Added comprehensive type specifications
-- Added CLI interface
-- Improved certificate parsing
-- Added SAN domain extraction
-- Better timeout handling
-- Comprehensive test suite
-
-### v0.1.0
-- Initial release
-- Basic certificate checking
+See [CHANGELOG.md](CHANGELOG.md) for the full history and [Releases](https://github.com/jeorgexyz/ssl-certificate-checker/releases) for release notes.
