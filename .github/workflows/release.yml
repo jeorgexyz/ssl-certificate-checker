@@ -1,0 +1,183 @@
+name: Release
+
+# Publishes a release: a multi-architecture Docker image on ghcr.io, and the escript plus its
+# checksum attached to the GitHub release. Runs when a vX.Y.Z tag is pushed (including tags
+# created from the GitHub "Create a new release" page), or manually for an existing tag.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to publish, e.g. v0.3.0 (also moves the image's "latest" tag)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify tag
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.tag.outputs.version }}
+
+    steps:
+    - name: Resolve tag
+      id: tag
+      env:
+        TAG: ${{ inputs.tag || github.ref_name }}
+      run: |
+        if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          echo "::error::Tag '$TAG' is not of the form vMAJOR.MINOR.PATCH"
+          exit 1
+        fi
+        echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+        echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+    - name: Checkout tag
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ steps.tag.outputs.tag }}
+
+    - name: Check that mix.exs matches the tag
+      env:
+        VERSION: ${{ steps.tag.outputs.version }}
+      run: |
+        if ! grep -q "version: \"$VERSION\"" mix.exs; then
+          echo "::error::mix.exs version does not match tag v$VERSION"
+          grep -n 'version:' mix.exs
+          exit 1
+        fi
+
+  escript:
+    name: Attach escript to release
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      MIX_ENV: prod
+      TAG: ${{ needs.verify.outputs.tag }}
+
+    steps:
+    - name: Checkout tag
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ needs.verify.outputs.tag }}
+
+    - name: Set up Elixir
+      uses: erlef/setup-beam@v1
+      with:
+        elixir-version: '1.14'
+        otp-version: '25'
+
+    - name: Build escript
+      run: |
+        mix deps.get --only prod
+        mix escript.build
+        ./ssl_certificate_checker --help
+        sha256sum ssl_certificate_checker > ssl_certificate_checker.sha256
+
+    - name: Upload to the GitHub release
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+      run: |
+        if ! gh release view "$TAG" > /dev/null 2>&1; then
+          gh release create "$TAG" --verify-tag --draft --title "$TAG" \
+            --notes "Draft created by the release workflow. See CHANGELOG.md for changes."
+        fi
+        gh release upload "$TAG" ssl_certificate_checker ssl_certificate_checker.sha256 --clobber
+
+  image:
+    name: Publish Docker image
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+    - name: Checkout tag
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ needs.verify.outputs.tag }}
+
+    # The source comes from the tag, but the Dockerfile comes from the workflow's own commit,
+    # so a manual run can publish an older tag with the current build recipe. For tag pushes
+    # both are the same commit. .dockerignore keeps this directory out of the build context.
+    - name: Checkout Dockerfile from the workflow's commit
+      uses: actions/checkout@v4
+      with:
+        path: build-files
+
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build image for smoke tests
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        file: build-files/Dockerfile
+        platforms: linux/amd64
+        load: true
+        tags: ssl-certificate-checker:test
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Smoke-test image
+      run: |
+        docker run --rm ssl-certificate-checker:test --help
+        docker run --rm ssl-certificate-checker:test google.com --json
+
+    - name: Log in to GitHub Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Image metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      env:
+        # Multi-architecture images need index-level annotations for ghcr.io to show them.
+        DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
+      with:
+        images: ghcr.io/${{ github.repository }}
+        tags: |
+          type=semver,pattern={{version}},value=${{ needs.verify.outputs.tag }}
+          type=semver,pattern={{major}}.{{minor}},value=${{ needs.verify.outputs.tag }}
+          type=raw,value=latest
+        labels: |
+          org.opencontainers.image.title=ssl-certificate-checker
+          org.opencontainers.image.description=Checks TLS certificates the way a real client does: trusted chain, host name, and expiry. JSON output and exit codes for scripts.
+          org.opencontainers.image.licenses=MIT
+        annotations: |
+          org.opencontainers.image.title=ssl-certificate-checker
+          org.opencontainers.image.description=Checks TLS certificates the way a real client does: trusted chain, host name, and expiry. JSON output and exit codes for scripts.
+          org.opencontainers.image.licenses=MIT
+
+    - name: Build and push (linux/amd64, linux/arm64)
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        file: build-files/Dockerfile
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        annotations: ${{ steps.meta.outputs.annotations }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max

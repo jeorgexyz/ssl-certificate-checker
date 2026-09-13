@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Release workflow: pushing a `vX.Y.Z` tag publishes a `linux/amd64` and `linux/arm64` image to
+  `ghcr.io/jeorgexyz/ssl-certificate-checker` and attaches the escript and its SHA-256 checksum
+  to the GitHub release. It can also be run manually for an existing tag.
+
+### Changed
+- The Dockerfile builds the escript on the build machine's native platform and copies it into
+  each target platform's runtime image.
+
 ## [0.3.0] - 2026-09-13
 
 ### Security

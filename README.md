@@ -241,7 +241,11 @@ Checks if certificate expiry is within the warning threshold.
 
 ## Command Line Interface
 
-### Building the Executable
+### Getting the Executable
+
+Download `ssl_certificate_checker` from the
+[latest release](https://github.com/jeorgexyz/ssl-certificate-checker/releases/latest), and
+verify it with `sha256sum -c ssl_certificate_checker.sha256`. Or build it yourself:
 
 ```bash
 MIX_ENV=prod mix escript.build
@@ -341,16 +345,23 @@ end
 
 ## Docker Support
 
-The image contains only the Erlang runtime and the escript, and runs as an unprivileged user.
-Arguments are passed straight to the CLI:
+Each release publishes an image for `linux/amd64` and `linux/arm64` to GitHub Container
+Registry. It contains only the Erlang runtime and the escript, and runs as an unprivileged
+user. Arguments are passed straight to the CLI:
+
+```bash
+docker run --rm ghcr.io/jeorgexyz/ssl-certificate-checker google.com
+docker run --rm ghcr.io/jeorgexyz/ssl-certificate-checker:0.3.0 example.com 8443 --json
+
+# Trust a private CA by mounting it into the container
+docker run --rm -v "$PWD/internal-ca.pem:/ca.pem:ro" ghcr.io/jeorgexyz/ssl-certificate-checker internal.example --cacert /ca.pem
+```
+
+To build the image yourself:
 
 ```bash
 docker build -t ssl-certificate-checker .
 docker run --rm ssl-certificate-checker google.com
-docker run --rm ssl-certificate-checker example.com 8443 --json
-
-# Trust a private CA by mounting it into the container
-docker run --rm -v "$PWD/internal-ca.pem:/ca.pem:ro" ssl-certificate-checker internal.example --cacert /ca.pem
 ```
 
 ## Requirements
