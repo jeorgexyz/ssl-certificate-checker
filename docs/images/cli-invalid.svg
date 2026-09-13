@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" width="555" height="560" viewBox="0 0 555 560" role="img" aria-labelledby="title">
+  <title id="title">ssl_certificate_checker output for expired.badssl.com</title>
+  <style>
+    text { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size: 13px; white-space: pre; fill: #c9d1d9; }
+    .prompt { fill: #7ee787; }
+    .command, .heading { fill: #f0f6fc; font-weight: 600; }
+    .label { fill: #8b949e; }
+    .dim { fill: #6e7681; }
+    .ok { fill: #3fb950; font-weight: 600; }
+    .bad { fill: #f85149; font-weight: 600; }
+    .warn { fill: #d29922; font-weight: 600; }
+    .window-title { fill: #8b949e; font-size: 12px; }
+  </style>
+  <rect x="0.5" y="0.5" width="554" height="559" rx="8" fill="#0d1117" stroke="#30363d"/>
+  <circle cx="20" cy="18" r="6" fill="#ff5f57"/>
+  <circle cx="40" cy="18" r="6" fill="#febc2e"/>
+  <circle cx="60" cy="18" r="6" fill="#28c840"/>
+  <text class="window-title" x="277" y="22" text-anchor="middle">expired.badssl.com</text>
+  <text x="20" y="49"><tspan class="prompt">$ </tspan><tspan class="command">ssl_certificate_checker expired.badssl.com</tspan></text>
+  <text x="20" y="67"><tspan class="dim">Checking TLS certificate for expired.badssl.com:443...</tspan></text>
+  <text x="20" y="85"><tspan class="value"></tspan></text>
+  <text x="20" y="103"><tspan class="heading">SSL Certificate Information</tspan></text>
+  <text x="20" y="121"><tspan class="dim">============================================================</tspan></text>
+  <text x="20" y="139"><tspan class="label">Host:              </tspan><tspan class="value">expired.badssl.com:443</tspan></text>
+  <text x="20" y="157"><tspan class="label">Common Name:       </tspan><tspan class="value">*.badssl.com</tspan></text>
+  <text x="20" y="175"><tspan class="label">Subject:           </tspan><tspan class="value">*.badssl.com</tspan></text>
+  <text x="20" y="193"><tspan class="label">Issuer:            </tspan><tspan class="value">COMODO CA Limited</tspan></text>
+  <text x="20" y="211"><tspan class="label">Serial Number:     </tspan><tspan class="value">4AE79549FA9ABE3F100F17A478E16909</tspan></text>
+  <text x="20" y="229"><tspan class="value"></tspan></text>
+  <text x="20" y="247"><tspan class="label">Valid From:        </tspan><tspan class="value">2015-04-09 00:00:00Z</tspan></text>
+  <text x="20" y="265"><tspan class="label">Valid Until:       </tspan><tspan class="value">2015-04-12 23:59:59Z</tspan></text>
+  <text x="20" y="283"><tspan class="value"></tspan></text>
+  <text x="20" y="301"><tspan class="label">TLS:               </tspan><tspan class="value">TLSv1.2 (TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256)</tspan></text>
+  <text x="20" y="319"><tspan class="label">Key:               </tspan><tspan class="value">RSA 2048-bit</tspan></text>
+  <text x="20" y="337"><tspan class="label">Signature:         </tspan><tspan class="value">sha256WithRSAEncryption</tspan></text>
+  <text x="20" y="355"><tspan class="value"></tspan></text>
+  <text x="20" y="373"><tspan class="label">Status:            </tspan><tspan class="bad">INVALID</tspan></text>
+  <text x="20" y="391"><tspan class="bad">  - Certificate is expired or not yet valid</tspan></text>
+  <text x="20" y="409"><tspan class="label">Expiry:            </tspan><tspan class="bad">EXPIRED 4172 days ago</tspan></text>
+  <text x="20" y="427"><tspan class="value"></tspan></text>
+  <text x="20" y="445"><tspan class="heading">Subject Alternative Names:</tspan></text>
+  <text x="20" y="463"><tspan class="value">  - *.badssl.com</tspan></text>
+  <text x="20" y="481"><tspan class="value">  - badssl.com</tspan></text>
+  <text x="20" y="499"><tspan class="value"></tspan></text>
+  <text x="20" y="517"><tspan class="prompt">$ </tspan><tspan class="command">echo $?</tspan></text>
+  <text x="20" y="535"><tspan class="bad">2</tspan></text>
+</svg>

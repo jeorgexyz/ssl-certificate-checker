@@ -29,6 +29,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `common_name` is now always the subject's CN.
 - Tests run offline against local TLS servers; tests that use public hosts are tagged
   `:external` and excluded by default.
+- **Breaking (CLI):** with `--json`, stdout now contains exactly one JSON object, including
+  `host` and `port`, and failures are reported as `{"error": ..., "message": ...}` instead of
+  plain text. The "Checking..." line is no longer printed in JSON mode.
+- **Breaking (CLI):** `--verbose` was removed (it had no effect), and running without a host
+  now exits with code 1 instead of 0.
+- The CLI lists at most 10 subject alternative names in text mode; `--json` includes all.
+- Logs go to stderr so they can't corrupt JSON output.
+- `mix.lock` is now committed so CI, Docker, and escript builds are reproducible.
+- CI uses `actions/checkout@v4` and `actions/cache@v4`, and builds the escript and Docker image.
 
 ### Added
 - `verification_errors`, `signature_algorithm`, `key_type`, `key_size`, `tls_version`, and
@@ -37,8 +46,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `is_valid?/3`, `days_until_expiry/3`, and `expiring_soon?/3` now pass options such as
   `:timeout` through to `check/3`.
 - Windows and macOS support.
+- `mix escript.build` produces a working `ssl_certificate_checker` executable.
+- CLI options `--timeout <ms>` and `--cacert <file>`.
+- `SslCertificateChecker.CLI.run/1`, which returns the exit code instead of halting.
+- The Docker image is built from the escript on a minimal Erlang base and runs as `nobody`.
 
 ### Fixed
+- Certificates whose chain includes a cross-signed root were reported as `:unknown_ca` whenever
+  the cross-signing root wasn't in the trust store, even though a trusted path existed (for
+  example google.com on Alpine Linux). OTP's search for alternative paths now runs as it does
+  for any normal TLS client.
+- `ssl_certificate_checker <host> --json` failed with "Invalid port" unless a port was also given.
+- The Docker build failed because `mix.lock` was not in the repository.
 - The project did not compile: invalid app name in `mix.exs` and an undefined variable in the CLI.
 - The `:verify_expiry` option was documented but never implemented; it has been removed.
 - A timed-out check could leave an `openssl` process running.

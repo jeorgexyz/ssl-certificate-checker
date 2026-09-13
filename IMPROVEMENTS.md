@@ -1,5 +1,11 @@
 # SSL Certificate Checker - Improvements Summary
 
+> **Historical document.** This describes the 0.1.0 → 0.2.0 rewrite. The OpenSSL-based
+> implementation shown below has since been replaced by Erlang's native `:ssl` because it was
+> vulnerable to shell injection and did not verify the certificate chain or host name. Several
+> claims below (production readiness, coverage figures) did not hold. See
+> [CHANGELOG.md](CHANGELOG.md) for current behavior.
+
 ## Overview
 This document outlines the comprehensive improvements made to the SSL Certificate Checker library, transforming it from a basic proof-of-concept into a production-ready, feature-rich Elixir library.
 

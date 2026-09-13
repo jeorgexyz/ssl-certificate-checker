@@ -1,0 +1,7 @@
+# Send only what the Dockerfile copies. Everything else (_build, deps, the local escript,
+# docs, tests) stays out of the build context. Add paths here if the Dockerfile copies more.
+*
+!mix.exs
+!mix.lock
+!config
+!lib

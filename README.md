@@ -5,6 +5,11 @@ A robust Elixir library for checking and validating SSL/TLS certificates. Get de
 [![Hex.pm](https://img.shields.io/hexpm/v/ssl_certificate_checker.svg)](https://hex.pm/packages/ssl_certificate_checker)
 [![Documentation](https://img.shields.io/badge/docs-hexdocs-blue.svg)](https://hexdocs.pm/ssl_certificate_checker)
 
+<p align="center">
+  <img src="docs/images/cli-valid.svg" alt="ssl_certificate_checker github.com: valid certificate, TLSv1.3, exit code 0" width="49%">
+  <img src="docs/images/cli-invalid.svg" alt="ssl_certificate_checker expired.badssl.com: INVALID, certificate expired, exit code 2" width="49%">
+</p>
+
 ## Features
 
 - **Full Verification** - Checks the chain against the system CA store, the host name, and the validity period, and reports every problem found
@@ -235,12 +240,15 @@ Checks if certificate expiry is within the warning threshold.
 
 ## Command Line Interface
 
-### Installation as Escript
+### Building the Executable
 
 ```bash
-mix escript.build
+MIX_ENV=prod mix escript.build
 ./ssl_certificate_checker google.com
 ```
+
+The escript needs only Erlang/OTP 25+ installed to run. On Windows, run it with
+`escript ssl_certificate_checker google.com`.
 
 ### Usage
 
@@ -254,15 +262,48 @@ ssl_certificate_checker example.com 8443
 # JSON output
 ssl_certificate_checker google.com --json
 
-# Verbose mode
-ssl_certificate_checker google.com --verbose
+# Shorter timeout (milliseconds)
+ssl_certificate_checker example.com --timeout 3000
+
+# Trust a private CA (PEM file; may be repeated)
+ssl_certificate_checker internal.example --cacert internal-ca.pem
+```
+
+### JSON Output
+
+With `--json`, stdout contains exactly one JSON object and nothing else, whether the check
+succeeds or fails, so it can be piped into `jq` or read by other programs. Successful checks
+include every field from `check/3` plus `host` and `port`:
+
+```json
+{
+  "host": "self-signed.badssl.com",
+  "port": 443,
+  "is_valid": false,
+  "verification_errors": ["selfsigned_peer"],
+  "days_until_expiry": 725,
+  "valid_until": "2028-09-07T21:00:17Z",
+  "tls_version": "TLSv1.2",
+  "...": "..."
+}
+```
+
+Failures use `error` for the machine-readable reason and `message` for a description:
+
+```json
+{
+  "host": "does-not-exist.invalid",
+  "port": 443,
+  "error": "nxdomain",
+  "message": "Host name does not resolve"
+}
 ```
 
 ### Exit Codes
 
 - `0` - Certificate is valid
-- `1` - Error occurred during check
-- `2` - Certificate is invalid or expired
+- `1` - Check could not be completed (invalid arguments, network or TLS error)
+- `2` - Certificate was retrieved but failed verification
 
 ## Error Handling
 
@@ -299,27 +340,16 @@ end
 
 ## Docker Support
 
-Build and run with Docker:
-
-```dockerfile
-FROM elixir:1.14-alpine
-
-RUN apk add --no-cache ca-certificates
-
-WORKDIR /app
-COPY . .
-
-RUN mix local.hex --force && \
-    mix local.rebar --force && \
-    mix deps.get && \
-    mix compile
-
-CMD ["mix", "run", "-e", "SslCertificateChecker.CLI.main(System.argv())"]
-```
+The image contains only the Erlang runtime and the escript, and runs as an unprivileged user.
+Arguments are passed straight to the CLI:
 
 ```bash
-docker build -t ssl-checker .
-docker run ssl-checker google.com
+docker build -t ssl-certificate-checker .
+docker run --rm ssl-certificate-checker google.com
+docker run --rm ssl-certificate-checker example.com 8443 --json
+
+# Trust a private CA by mounting it into the container
+docker run --rm -v "$PWD/internal-ca.pem:/ca.pem:ro" ssl-certificate-checker internal.example --cacert /ca.pem
 ```
 
 ## Requirements
@@ -365,6 +395,9 @@ mix docs
 
 # Format code
 mix format
+
+# Regenerate the README screenshots (uses live certificates)
+MIX_ENV=prod mix escript.build && elixir scripts/render_cli_screenshots.exs
 ```
 
 ## Performance

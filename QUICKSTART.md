@@ -118,36 +118,39 @@ end)
 
 ```bash
 # Build the escript
-mix escript.build
+MIX_ENV=prod mix escript.build
 
-# Check a certificate
-./ssl-certificate-checker google.com
+# Check a certificate (on Windows: escript ssl_certificate_checker google.com)
+./ssl_certificate_checker google.com
 
 # Check with custom port
-./ssl-certificate-checker mysite.com 8443
+./ssl_certificate_checker mysite.com 8443
 
 # Get JSON output
-./ssl-certificate-checker google.com --json
+./ssl_certificate_checker google.com --json
 
-# Use in scripts
-if ./ssl-certificate-checker mysite.com; then
+# Use in scripts: exit code 0 = valid, 1 = check failed, 2 = invalid certificate
+if ./ssl_certificate_checker mysite.com; then
   echo "Certificate is valid"
 else
   echo "Certificate check failed"
 fi
+
+# Pull out one field with jq
+./ssl_certificate_checker mysite.com --json | jq .days_until_expiry
 ```
 
 ## Using with Docker
 
 ```bash
 # Build the image
-docker build -t ssl-checker .
+docker build -t ssl-certificate-checker .
 
 # Run a check
-docker run ssl-checker google.com
+docker run --rm ssl-certificate-checker google.com
 
 # Get JSON output
-docker run ssl-checker "SslCertificateChecker.CLI.main([\"google.com\", \"--json\"])"
+docker run --rm ssl-certificate-checker google.com --json
 ```
 
 ## Integration Examples
