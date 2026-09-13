@@ -37,15 +37,21 @@ IO.inspect(cert, pretty: true)
 Output:
 ```elixir
 %{
+  cipher_suite: "TLS_AES_256_GCM_SHA384",
   common_name: "*.google.com",
-  days_until_expiry: 45,
+  days_until_expiry: 49,
   is_valid: true,
-  issuer: "WR2",
-  san_domains: ["*.google.com", "google.com"],
-  serial_number: "ABC123...",
-  subject: "Google LLC",
-  valid_from: ~U[2024-11-04 08:24:47Z],
-  valid_until: ~U[2025-01-27 08:24:46Z]
+  issuer: "Google Trust Services",
+  key_size: 256,
+  key_type: "EC",
+  san_domains: ["*.google.com", "*.appengine.google.com", ...],
+  serial_number: "10C2A4E9E146487D0A329F6E9CD50813",
+  signature_algorithm: "ecdsa-with-SHA256",
+  subject: "*.google.com",
+  tls_version: "TLSv1.3",
+  valid_from: ~U[2026-08-10 08:37:42Z],
+  valid_until: ~U[2026-11-02 08:37:41Z],
+  verification_errors: []
 }
 ```
 
@@ -62,7 +68,7 @@ case SslCertificateChecker.is_valid?("mysite.com") do
     IO.puts("[WARN] Certificate is invalid or expired")
 
   {:error, reason} ->
-    IO.puts("[ERROR] #{reason}")
+    IO.puts("[ERROR] #{inspect(reason)}")
 end
 
 ```
@@ -104,7 +110,7 @@ Enum.each(results, fn
     IO.puts("[OK] #{cert.common_name}: #{cert.days_until_expiry} days")
 
   {:error, reason} ->
-    IO.puts("[ERROR] #{reason}")
+    IO.puts("[ERROR] #{inspect(reason)}")
 end)
 ```
 
@@ -176,7 +182,7 @@ defmodule MyApp.CertMonitor do
       {:ok, false} ->
         Logger.debug("Certificate for #{host} is OK")
       {:error, reason} ->
-        Logger.error("Failed to check #{host}: #{reason}")
+        Logger.error("Failed to check #{host}: #{inspect(reason)}")
     end
   end
 
@@ -232,7 +238,7 @@ end
 
 defp handle_result({:error, host, reason}) do
   # Log error
-  IO.puts("[ERROR] #{host}: #{reason}")
+  IO.puts("[ERROR] #{host}: #{inspect(reason)}")
 end
 
 ```
@@ -267,17 +273,21 @@ end
 
 ## Troubleshooting
 
-### "OpenSSL not found"
+### `{:error, :no_trusted_certificates}`
+The operating system's CA store couldn't be loaded. This needs Erlang/OTP 25+, and on
+minimal Linux images the CA bundle must be installed:
 ```bash
 # On Ubuntu/Debian
-sudo apt-get install openssl
-
-# On macOS
-brew install openssl
+sudo apt-get install ca-certificates
 
 # On Alpine (Docker)
-apk add --no-cache openssl
+apk add --no-cache ca-certificates
 ```
+For servers using a private CA, pass it explicitly with `cacerts: [ca_der]`.
+
+### Certificate is returned but `is_valid` is `false`
+Check `cert.verification_errors`, e.g. `:unknown_ca` (untrusted chain), `:selfsigned_peer`,
+`:hostname_check_failed`, or `:cert_expired`.
 
 ### "Connection timeout"
 ```elixir
@@ -285,11 +295,11 @@ apk add --no-cache openssl
 SslCertificateChecker.check("slow-site.com", 443, timeout: 30_000)
 ```
 
-### "Invalid certificate data"
-This usually means the host doesn't have a valid SSL certificate or isn't reachable. Verify:
-1. The host is accessible
+### `:connection_refused`, `:nxdomain`, or `{:tls_handshake_failed, _}`
+The host couldn't be reached over TLS. Verify:
+1. The host name resolves and is accessible
 2. The port is correct (usually 443)
-3. The host actually uses SSL/TLS
+3. The service on that port actually speaks TLS 1.2 or 1.3
 
 ## Getting Help
 

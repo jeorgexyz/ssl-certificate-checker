@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+- Fixed shell command injection: host names were interpolated into a `/bin/sh -c` command,
+  so a host such as `"example.com; <command>"` executed arbitrary commands. Certificates are
+  now fetched with Erlang's `:ssl` and no shell is involved. The 0.2.0 note below claiming
+  "no shell injection vulnerabilities" was incorrect.
+- Host names are now validated strictly (DNS hostname or IP literal only).
+
+### Changed
+- **Breaking:** `is_valid` now requires a trusted chain and a matching host name in addition to
+  the validity period. Previously self-signed certificates and certificates for other domains
+  were reported as valid.
+- **Breaking:** error reasons are now `:nxdomain`, `:connection_refused`, `:timeout`,
+  `{:connection_failed, posix}`, `{:tls_handshake_failed, message}`, `:invalid_certificate`, and
+  `:no_trusted_certificates`. `:connection_failed`, `:system_error`,
+  `:invalid_certificate_data`, `:missing_date`, `:invalid_date_format`, and `:date_parse_error`
+  are gone.
+- OpenSSL is no longer required; Erlang/OTP 25+ is.
+- `days_until_expiry` rounds down, so a certificate that expired hours ago is `-1`, not `0`.
+- `subject` and `issuer` prefer the organization (O) and fall back to the common name (CN);
+  `common_name` is now always the subject's CN.
+- Tests run offline against local TLS servers; tests that use public hosts are tagged
+  `:external` and excluded by default.
+
+### Added
+- `verification_errors`, `signature_algorithm`, `key_type`, `key_size`, `tls_version`, and
+  `cipher_suite` fields.
+- `:cacerts` option for servers issued by a private CA.
+- `is_valid?/3`, `days_until_expiry/3`, and `expiring_soon?/3` now pass options such as
+  `:timeout` through to `check/3`.
+- Windows and macOS support.
+
+### Fixed
+- The project did not compile: invalid app name in `mix.exs` and an undefined variable in the CLI.
+- The `:verify_expiry` option was documented but never implemented; it has been removed.
+- A timed-out check could leave an `openssl` process running.
+- Removed the Dialyzer `:race_conditions` flag, which newer OTP releases reject.
+
 ## [0.2.0] - 2025-01-09
 
 ### Added

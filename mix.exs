@@ -3,9 +3,10 @@ defmodule SslCertificateChecker.MixProject do
 
   def project do
     [
-      app: :ssl-certificate-checker,
+      app: :ssl_certificate_checker,
       version: "0.2.0",
       elixir: "~> 1.14",
+      elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       description: description(),
@@ -20,16 +21,19 @@ defmodule SslCertificateChecker.MixProject do
       ],
       dialyzer: [
         plt_add_apps: [:mix, :ex_unit],
-        flags: [:error_handling, :race_conditions, :underspecs]
+        flags: [:error_handling, :underspecs]
       ]
     ]
   end
 
   def application do
     [
-      extra_applications: [:logger, :ssl, :crypto]
+      extra_applications: [:logger, :ssl, :public_key, :crypto]
     ]
   end
+
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_env), do: ["lib"]
 
   defp deps do
     [

@@ -75,7 +75,7 @@ defmodule Examples do
         IO.puts("INVALID #{String.pad_trailing(host, 20)} - #{days} days remaining")
 
       {host, :error, reason} ->
-        IO.puts("ERROR   #{String.pad_trailing(host, 20)} - #{reason}")
+        IO.puts("ERROR   #{String.pad_trailing(host, 20)} - #{inspect(reason)}")
     end)
 
     IO.puts("")
@@ -112,7 +112,7 @@ defmodule Examples do
           end
 
         {:error, reason} ->
-          IO.puts("ERROR: #{host} - #{reason}")
+          IO.puts("ERROR: #{host} - #{inspect(reason)}")
       end
     end)
 

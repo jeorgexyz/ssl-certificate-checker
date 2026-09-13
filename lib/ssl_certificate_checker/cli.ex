@@ -58,6 +58,7 @@ defmodule SslCertificateChecker.CLI do
     end)
   end
 
+  @spec check_and_display(String.t(), integer(), keyword()) :: no_return()
   defp check_and_display(host, port, opts) do
     IO.puts("Checking SSL certificate for #{host}:#{port}...")
     IO.puts("")
@@ -94,9 +95,16 @@ defmodule SslCertificateChecker.CLI do
     IO.puts("Valid From:        #{DateTime.to_string(cert_info.valid_from)}")
     IO.puts("Valid Until:       #{DateTime.to_string(cert_info.valid_until)}")
     IO.puts("")
+    IO.puts("TLS:               #{cert_info.tls_version} (#{cert_info.cipher_suite})")
+    IO.puts("Key:               #{format_key(cert_info)}")
+    IO.puts("Signature:         #{cert_info.signature_algorithm}")
+    IO.puts("")
 
-    status = if cert_info.is_valid, do: "OK", else: "INVALID"
-    IO.puts("Status:            #{status_icon} #{if cert_info.is_valid, do: "Valid", else: "Invalid/Expired"}")
+    IO.puts("Status:            #{if cert_info.is_valid, do: "Valid", else: "INVALID"}")
+
+    Enum.each(cert_info.verification_errors, fn error ->
+      IO.puts("  - #{describe_verification_error(error)}")
+    end)
 
     expiry_warning =
       cond do
@@ -118,6 +126,7 @@ defmodule SslCertificateChecker.CLI do
     unless Enum.empty?(cert_info.san_domains) do
       IO.puts("")
       IO.puts("Subject Alternative Names:")
+
       Enum.each(cert_info.san_domains, fn domain ->
         IO.puts("  - #{domain}")
       end)
@@ -125,6 +134,20 @@ defmodule SslCertificateChecker.CLI do
 
     IO.puts("")
   end
+
+  defp format_key(%{key_type: type, key_size: nil}), do: type
+  defp format_key(%{key_type: type, key_size: size}), do: "#{type} #{size}-bit"
+
+  defp describe_verification_error(:unknown_ca), do: "Certificate chain is not trusted"
+  defp describe_verification_error(:selfsigned_peer), do: "Certificate is self-signed"
+
+  defp describe_verification_error(:hostname_check_failed),
+    do: "Certificate does not match the host name"
+
+  defp describe_verification_error(:cert_expired),
+    do: "Certificate is expired or not yet valid"
+
+  defp describe_verification_error(error), do: "Verification failed: #{error}"
 
   defp display_json(cert_info) do
     json =

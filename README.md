@@ -7,14 +7,13 @@ A robust Elixir library for checking and validating SSL/TLS certificates. Get de
 
 ## Features
 
-- **Certificate Validation** - Check if certificates are valid and properly configured
+- **Full Verification** - Checks the chain against the system CA store, the host name, and the validity period, and reports every problem found
 - **Expiry Monitoring** - Get precise expiry dates and warnings
-- **Detailed Information** - Extract subject, issuer, SAN domains, and more
-- **Async Support** - Built with async operations and timeouts
+- **Detailed Information** - Subject, issuer, SAN domains, key type and size, signature algorithm, negotiated TLS version and cipher
+- **No OpenSSL or Shell** - Uses Erlang's built-in `:ssl`, so it runs on Linux, macOS, and Windows and host input never reaches a shell
 - **Error Handling** - Comprehensive error handling with meaningful messages
 - **Type Safe** - Full type specifications for better code quality
 - **CLI Tool** - Command-line interface for quick checks
-- **Zero External Dependencies** - Uses only standard Elixir libraries (except Jason for JSON)
 
 ## Installation
 
@@ -62,9 +61,10 @@ case SslCertificateChecker.check("google.com") do
     IO.puts("Valid until: #{cert_info.valid_until}")
     IO.puts("Days until expiry: #{cert_info.days_until_expiry}")
     IO.puts("Is valid: #{cert_info.is_valid}")
+    IO.puts("Problems: #{inspect(cert_info.verification_errors)}")
 
   {:error, reason} ->
-    IO.puts("Error: #{reason}")
+    IO.puts("Error: #{inspect(reason)}")
 end
 ```
 
@@ -80,6 +80,14 @@ end
 ```elixir
 # Set a custom timeout (in milliseconds)
 {:ok, cert} = SslCertificateChecker.check("example.com", 443, timeout: 5000)
+```
+
+### Private CA
+
+```elixir
+# Trust a specific CA instead of the operating system's store
+[{:Certificate, ca_der, _}] = :public_key.pem_decode(File.read!("internal-ca.pem"))
+{:ok, cert} = SslCertificateChecker.check("internal.example", 443, cacerts: [ca_der])
 ```
 
 ### Monitoring Certificate Expiry
@@ -143,7 +151,7 @@ Enum.each(results, fn
   IO.puts("#{host}: #{days} days until expiry")
 
 {host, :error, reason} ->
-  IO.puts("#{host}: error - #{reason}")
+  IO.puts("#{host}: error - #{inspect(reason)}")
 
 end)
 ```
@@ -154,7 +162,16 @@ end)
 
 #### `check(host, port \\ 443, opts \\ [])`
 
-Checks the SSL certificate for a given host and port.
+Connects to the host and returns the certificate it presents. A certificate that fails
+verification is still returned; check `is_valid` and `verification_errors`.
+
+`host` must be a DNS hostname or an IP address. URLs, `host:port` strings, and anything
+containing whitespace or shell metacharacters return `{:error, :invalid_host}` without
+connecting.
+
+**Options:**
+- `:timeout` - Connection and handshake timeout in milliseconds (default: 10000)
+- `:cacerts` - DER-encoded CA certificates to trust instead of the system store
 
 **Returns:**
 - `{:ok, certificate_info}` - Success with certificate details
@@ -163,28 +180,40 @@ Checks the SSL certificate for a given host and port.
 **Certificate Info Map:**
 ```elixir
 %{
-  subject: "Organization Name",
+  subject: "Organization Name",          # O, or CN if there is no O
   issuer: "Certificate Authority",
-  valid_from: ~U[2024-01-01 00:00:00Z],
-  valid_until: ~U[2025-01-01 00:00:00Z],
-  days_until_expiry: 45,
-  is_valid: true,
   common_name: "*.example.com",
   san_domains: ["*.example.com", "example.com"],
-  serial_number: "ABC123..."
+  serial_number: "4F1C...",
+  valid_from: ~U[2026-01-01 00:00:00Z],
+  valid_until: ~U[2027-01-01 00:00:00Z],
+  days_until_expiry: 45,
+  is_valid: true,                        # trusted, matches host, within validity period
+  verification_errors: [],               # e.g. [:unknown_ca, :hostname_check_failed]
+  signature_algorithm: "sha256WithRSAEncryption",
+  key_type: "RSA",                       # "RSA", "EC", "Ed25519", ...
+  key_size: 2048,                        # nil when not applicable
+  tls_version: "TLSv1.3",
+  cipher_suite: "TLS_AES_256_GCM_SHA384"
 }
 ```
 
-#### `is_valid?(host, port \\ 443)`
+**Verification errors** you're most likely to see:
+- `:unknown_ca` - The chain doesn't lead to a trusted root
+- `:selfsigned_peer` - The certificate is self-signed
+- `:hostname_check_failed` - The certificate doesn't cover the requested host
+- `:cert_expired` - The certificate is expired or not yet valid
 
-Checks if a certificate is currently valid.
+#### `is_valid?(host, port \\ 443, opts \\ [])`
+
+Checks that the certificate is trusted, matches the host, and is within its validity period.
 
 **Returns:**
 - `{:ok, true}` - Certificate is valid
-- `{:ok, false}` - Certificate is invalid or expired
+- `{:ok, false}` - Certificate failed verification
 - `{:error, reason}` - Error occurred
 
-#### `days_until_expiry(host, port \\ 443)`
+#### `days_until_expiry(host, port \\ 443, opts \\ [])`
 
 Gets the number of days until the certificate expires.
 
@@ -239,32 +268,32 @@ ssl_certificate_checker google.com --verbose
 
 The library returns standardized error atoms:
 
-- `:invalid_host` - Invalid or empty hostname
-- `:invalid_port` - Invalid port number
-- `:connection_failed` - Failed to connect to host
-- `:timeout` - Operation timed out
-- `:system_error` - System-level error
-- `:invalid_certificate_data` - Could not parse certificate
-- `:missing_date` - Certificate dates missing
-- `:invalid_date_format` - Could not parse date
-- `:date_parse_error` - Error parsing date
+- `:invalid_host` - Not a valid hostname or IP address
+- `:invalid_port` - Port outside 1..65535
+- `:no_trusted_certificates` - The CA store is empty or couldn't be loaded
+- `:nxdomain` - The hostname doesn't resolve
+- `:connection_refused` - Nothing is listening on that port
+- `:timeout` - Connection or handshake timed out
+- `{:connection_failed, posix_reason}` - Other network error, e.g. `:ehostunreach`
+- `{:tls_handshake_failed, message}` - The server doesn't speak TLS or rejected the handshake
+- `:invalid_certificate` - The certificate couldn't be decoded
 
 ```elixir
-case SslCertificateChecker.check("invalid-host") do
+case SslCertificateChecker.check("example.com") do
+  {:ok, %{is_valid: true} = cert} ->
+    IO.puts("Valid, expires in #{cert.days_until_expiry} days")
+
   {:ok, cert} ->
-    # Handle success
+    IO.puts("Certificate problems: #{inspect(cert.verification_errors)}")
 
   {:error, :invalid_host} ->
     IO.puts("Invalid hostname provided")
-
-  {:error, :connection_failed} ->
-    IO.puts("Could not connect to host")
 
   {:error, :timeout} ->
     IO.puts("Connection timed out")
 
   {:error, reason} ->
-    IO.puts("Unexpected error: #{reason}")
+    IO.puts("Could not check certificate: #{inspect(reason)}")
 end
 ```
 
@@ -275,7 +304,7 @@ Build and run with Docker:
 ```dockerfile
 FROM elixir:1.14-alpine
 
-RUN apk add --no-cache openssl
+RUN apk add --no-cache ca-certificates
 
 WORKDIR /app
 COPY . .
@@ -296,14 +325,18 @@ docker run ssl-checker google.com
 ## Requirements
 
 - Elixir ~> 1.14
-- OpenSSL (available in system PATH)
-- Erlang/OTP 24+
+- Erlang/OTP 25+ (for access to the system CA store)
+
+OpenSSL is not required.
 
 ## Testing
 
 ```bash
-# Run tests
+# Run tests (offline; uses local TLS servers with generated certificates)
 mix test
+
+# Also run tests against public hosts such as badssl.com
+mix test --include external
 
 # Run with coverage
 mix coveralls
@@ -347,10 +380,13 @@ Typical check takes 100-500ms depending on network latency.
 
 ## Security Considerations
 
-- This library checks certificate validity but does not perform full chain validation
-- Always validate certificates in production environments
-- Use appropriate timeouts to prevent hanging connections
-- Consider rate limiting when checking multiple hosts
+- Host names are validated strictly and passed to Erlang's `:ssl` directly; no shell or external process is involved
+- A check completes the TLS handshake even when verification fails so the certificate can be inspected, but no application data is ever sent. Don't reuse this to decide whether to trust a connection for real traffic
+- Revocation (CRL/OCSP) is not checked yet
+- Only TLS 1.2 and 1.3 are negotiated; servers limited to older versions return `{:tls_handshake_failed, _}`
+- Certificate fields such as subject and SAN are chosen by whoever runs the server; treat them as untrusted input
+- Checking arbitrary user-supplied hosts can be abused to probe internal networks; restrict hosts and ports if you expose this as a service
+- Use appropriate timeouts and consider rate limiting when checking many hosts
 
 ## Contributing
 
@@ -369,7 +405,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 ## Acknowledgments
 
 - Built with ❤️ using Elixir
-- Uses OpenSSL for certificate inspection
+- Uses Erlang/OTP's `:ssl` and `:public_key` for certificate inspection
 - Inspired by the need for simple certificate monitoring
 
 ## Changelog
