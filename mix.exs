@@ -8,6 +8,7 @@ defmodule SslCertificateChecker.MixProject do
       elixir: "~> 1.14",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
+      escript: [main_module: SslCertificateChecker.CLI],
       deps: deps(),
       description: description(),
       package: package(),

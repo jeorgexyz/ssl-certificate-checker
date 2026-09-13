@@ -25,8 +25,8 @@ ssl_certificate_checker-*.tar
 # Temporary files, for example, from tests.
 /tmp/
 
-# Ignore mix.lock for libraries
-/mix.lock
+# Escript built by "mix escript.build"
+/ssl_certificate_checker
 
 # Dialyzer
 *.plt

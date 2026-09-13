@@ -2,138 +2,204 @@ defmodule SslCertificateChecker.CLI do
   @moduledoc """
   Command-line interface for SSL Certificate Checker.
 
-  ## Usage
+  Build the executable with `mix escript.build`, then run
+  `./ssl_certificate_checker --help` for usage.
 
-      mix run -e "SslCertificateChecker.CLI.main([\"google.com\"])"
-      mix run -e "SslCertificateChecker.CLI.main([\"example.com\", \"8443\"])"
+  With `--json`, stdout contains exactly one JSON object for both successful checks and
+  failures, so output can be piped straight into other tools. Exit codes:
+
+    * `0` - the certificate is valid
+    * `1` - the check could not be completed (invalid arguments, network or TLS error)
+    * `2` - a certificate was retrieved but failed verification
   """
+
+  @exit_ok 0
+  @exit_error 1
+  @exit_invalid 2
+
+  @default_port 443
+  @max_listed_san_domains 10
+
+  @switches [json: :boolean, timeout: :integer, cacert: :keep, help: :boolean]
+  @aliases [h: :help]
 
   @doc """
-  Main entry point for the CLI.
+  Escript entry point. Runs the CLI and halts with its exit code.
   """
+  @spec main([String.t()]) :: no_return()
   def main(args) do
+    args |> run() |> System.halt()
+  end
+
+  @doc """
+  Runs the CLI with `args`, writing to stdout and stderr, and returns the exit code.
+  """
+  @spec run([String.t()]) :: 0 | 1 | 2
+  def run(args) do
     case parse_args(args) do
-      {:ok, host, port, opts} ->
-        check_and_display(host, port, opts)
+      :help ->
+        IO.puts(usage())
+        @exit_ok
 
-      {:error, :help} ->
-        print_help()
+      {:ok, config} ->
+        run_check(config)
 
-      {:error, reason} ->
-        IO.puts(:stderr, "Error: #{reason}")
-        print_help()
-        System.halt(1)
+      {:error, message} ->
+        IO.puts(:stderr, "Error: #{message}\n")
+        IO.puts(:stderr, usage())
+        @exit_error
     end
   end
 
-  defp parse_args(["--help"]), do: {:error, :help}
-  defp parse_args(["-h"]), do: {:error, :help}
-  defp parse_args([]), do: {:error, :help}
+  # Argument parsing
 
-  defp parse_args([host]) do
-    {:ok, host, 443, []}
-  end
+  defp parse_args(args) do
+    case OptionParser.parse(args, strict: @switches, aliases: @aliases) do
+      {opts, positional, []} ->
+        if opts[:help], do: :help, else: build_config(opts, positional)
 
-  defp parse_args([host, port_str]) do
-    case Integer.parse(port_str) do
-      {port, ""} -> {:ok, host, port, []}
-      _ -> {:error, "Invalid port number: #{port_str}"}
+      {_opts, _positional, [{switch, nil} | _]} ->
+        {:error, "Unknown option #{switch}"}
+
+      {_opts, _positional, [{switch, value} | _]} ->
+        {:error, "Invalid value for #{switch}: #{value}"}
     end
   end
 
-  defp parse_args([host, port_str | opts]) do
-    case Integer.parse(port_str) do
-      {port, ""} -> {:ok, host, port, parse_opts(opts)}
-      _ -> {:error, "Invalid port number: #{port_str}"}
+  defp build_config(opts, positional) do
+    with {:ok, host, port} <- parse_positional(positional),
+         {:ok, check_opts} <- check_options(opts) do
+      {:ok,
+       %{host: host, port: port, json: Keyword.get(opts, :json, false), check_opts: check_opts}}
     end
   end
 
-  defp parse_opts(opts) do
-    Enum.reduce(opts, [], fn opt, acc ->
-      case opt do
-        "--json" -> Keyword.put(acc, :json, true)
-        "--verbose" -> Keyword.put(acc, :verbose, true)
-        _ -> acc
+  defp parse_positional([]), do: {:error, "Missing host"}
+  defp parse_positional([host]), do: {:ok, host, @default_port}
+
+  defp parse_positional([host, port]) do
+    case Integer.parse(port) do
+      {port, ""} -> {:ok, host, port}
+      _ -> {:error, "Invalid port: #{port}"}
+    end
+  end
+
+  defp parse_positional(_args), do: {:error, "Too many arguments"}
+
+  defp check_options(opts) do
+    with {:ok, timeout_opts} <- timeout_option(opts[:timeout]),
+         {:ok, cacert_opts} <- cacert_option(Keyword.get_values(opts, :cacert)) do
+      {:ok, timeout_opts ++ cacert_opts}
+    end
+  end
+
+  defp timeout_option(nil), do: {:ok, []}
+  defp timeout_option(ms) when ms > 0, do: {:ok, [timeout: ms]}
+  defp timeout_option(ms), do: {:error, "Invalid timeout: #{ms}"}
+
+  defp cacert_option([]), do: {:ok, []}
+
+  defp cacert_option(paths) do
+    Enum.reduce_while(paths, {:ok, [cacerts: []]}, fn path, {:ok, [cacerts: cacerts]} ->
+      case read_certificates(path) do
+        {:ok, ders} -> {:cont, {:ok, [cacerts: cacerts ++ ders]}}
+        {:error, message} -> {:halt, {:error, message}}
       end
     end)
   end
 
-  @spec check_and_display(String.t(), integer(), keyword()) :: no_return()
-  defp check_and_display(host, port, opts) do
-    IO.puts("Checking SSL certificate for #{host}:#{port}...")
-    IO.puts("")
-
-    case SslCertificateChecker.check(host, port) do
-      {:ok, cert_info} ->
-        if Keyword.get(opts, :json) do
-          display_json(cert_info)
-        else
-          display_formatted(cert_info, host, port)
-        end
-
-        if cert_info.is_valid do
-          System.halt(0)
-        else
-          System.halt(2)
-        end
-
-      {:error, reason} ->
-        IO.puts(:stderr, "ERROR: Failed to check certificate: #{inspect(reason)}")
-        System.halt(1)
+  defp read_certificates(path) do
+    with {:ok, pem} <- File.read(path),
+         [_ | _] = ders <-
+           for({:Certificate, der, :not_encrypted} <- :public_key.pem_decode(pem), do: der) do
+      {:ok, ders}
+    else
+      [] -> {:error, "No PEM certificates found in #{path}"}
+      {:error, reason} -> {:error, "Cannot read #{path}: #{:file.format_error(reason)}"}
     end
   end
 
-  defp display_formatted(cert_info, host, port) do
-    IO.puts("📋 SSL Certificate Information")
-    IO.puts("=" |> String.duplicate(60))
+  # Checking and output
+
+  defp run_check(%{host: host, port: port, json: json?, check_opts: check_opts}) do
+    unless json?, do: IO.puts("Checking TLS certificate for #{host}:#{port}...\n")
+
+    result = SslCertificateChecker.check(host, port, check_opts)
+
+    if json?, do: print_json(result, host, port), else: print_text(result, host, port)
+
+    exit_code(result)
+  end
+
+  defp exit_code({:ok, %{is_valid: true}}), do: @exit_ok
+  defp exit_code({:ok, _cert}), do: @exit_invalid
+  defp exit_code({:error, _reason}), do: @exit_error
+
+  defp print_json({:ok, cert}, host, port) do
+    cert
+    |> Map.merge(%{host: host, port: port})
+    |> encode_json()
+  end
+
+  defp print_json({:error, reason}, host, port) do
+    encode_json(%{
+      host: host,
+      port: port,
+      error: error_code(reason),
+      message: describe_error(reason)
+    })
+  end
+
+  defp encode_json(data), do: data |> Jason.encode!(pretty: true) |> IO.puts()
+
+  defp print_text({:ok, cert}, host, port), do: display_certificate(cert, host, port)
+
+  defp print_text({:error, reason}, _host, _port),
+    do: IO.puts(:stderr, "Error: #{describe_error(reason)}")
+
+  defp display_certificate(cert, host, port) do
+    IO.puts("SSL Certificate Information")
+    IO.puts(String.duplicate("=", 60))
     IO.puts("Host:              #{host}:#{port}")
-    IO.puts("Common Name:       #{cert_info.common_name}")
-    IO.puts("Subject:           #{cert_info.subject}")
-    IO.puts("Issuer:            #{cert_info.issuer}")
-    IO.puts("Serial Number:     #{cert_info.serial_number}")
+    IO.puts("Common Name:       #{cert.common_name}")
+    IO.puts("Subject:           #{cert.subject}")
+    IO.puts("Issuer:            #{cert.issuer}")
+    IO.puts("Serial Number:     #{cert.serial_number}")
     IO.puts("")
-    IO.puts("Valid From:        #{DateTime.to_string(cert_info.valid_from)}")
-    IO.puts("Valid Until:       #{DateTime.to_string(cert_info.valid_until)}")
+    IO.puts("Valid From:        #{DateTime.to_string(cert.valid_from)}")
+    IO.puts("Valid Until:       #{DateTime.to_string(cert.valid_until)}")
     IO.puts("")
-    IO.puts("TLS:               #{cert_info.tls_version} (#{cert_info.cipher_suite})")
-    IO.puts("Key:               #{format_key(cert_info)}")
-    IO.puts("Signature:         #{cert_info.signature_algorithm}")
+    IO.puts("TLS:               #{cert.tls_version} (#{cert.cipher_suite})")
+    IO.puts("Key:               #{format_key(cert)}")
+    IO.puts("Signature:         #{cert.signature_algorithm}")
     IO.puts("")
+    IO.puts("Status:            #{if cert.is_valid, do: "Valid", else: "INVALID"}")
 
-    IO.puts("Status:            #{if cert_info.is_valid, do: "Valid", else: "INVALID"}")
-
-    Enum.each(cert_info.verification_errors, fn error ->
+    Enum.each(cert.verification_errors, fn error ->
       IO.puts("  - #{describe_verification_error(error)}")
     end)
 
-    expiry_warning =
-      cond do
-        cert_info.days_until_expiry < 0 ->
-          "ERROR:  EXPIRED #{abs(cert_info.days_until_expiry)} days ago!"
+    IO.puts("Expiry:            #{describe_expiry(cert.days_until_expiry)}")
 
-        cert_info.days_until_expiry <= 7 ->
-          "WARN: CRITICAL — Expires in #{cert_info.days_until_expiry} days"
+    unless Enum.empty?(cert.san_domains) do
+      {listed, unlisted} = Enum.split(cert.san_domains, @max_listed_san_domains)
 
-        cert_info.days_until_expiry <= 30 ->
-          "WARN: Expires in #{cert_info.days_until_expiry} days"
-
-        true ->
-          "OK: Expires in #{cert_info.days_until_expiry} days"
-      end
-
-    IO.puts("Expiry:            #{expiry_warning}")
-
-    unless Enum.empty?(cert_info.san_domains) do
       IO.puts("")
       IO.puts("Subject Alternative Names:")
+      Enum.each(listed, &IO.puts("  - #{&1}"))
 
-      Enum.each(cert_info.san_domains, fn domain ->
-        IO.puts("  - #{domain}")
-      end)
+      if unlisted != [] do
+        IO.puts("  ... and #{length(unlisted)} more (use --json to list all)")
+      end
     end
 
     IO.puts("")
   end
+
+  defp describe_expiry(days) when days < 0, do: "EXPIRED #{abs(days)} days ago"
+  defp describe_expiry(days) when days <= 7, do: "CRITICAL: expires in #{days} days"
+  defp describe_expiry(days) when days <= 30, do: "WARNING: expires in #{days} days"
+  defp describe_expiry(days), do: "OK: expires in #{days} days"
 
   defp format_key(%{key_type: type, key_size: nil}), do: type
   defp format_key(%{key_type: type, key_size: size}), do: "#{type} #{size}-bit"
@@ -149,41 +215,44 @@ defmodule SslCertificateChecker.CLI do
 
   defp describe_verification_error(error), do: "Verification failed: #{error}"
 
-  defp display_json(cert_info) do
-    json =
-      cert_info
-      |> Map.update!(:valid_from, &DateTime.to_iso8601/1)
-      |> Map.update!(:valid_until, &DateTime.to_iso8601/1)
-      |> Jason.encode!(pretty: true)
+  defp error_code({code, _detail}), do: code
+  defp error_code(code), do: code
 
-    IO.puts(json)
-  end
+  defp describe_error(:invalid_host), do: "Not a valid hostname or IP address"
+  defp describe_error(:invalid_port), do: "Port must be between 1 and 65535"
+  defp describe_error(:no_trusted_certificates), do: "No trusted CA certificates are available"
+  defp describe_error(:timeout), do: "Timed out connecting or completing the TLS handshake"
+  defp describe_error(:nxdomain), do: "Host name does not resolve"
+  defp describe_error(:connection_refused), do: "Connection refused"
+  defp describe_error(:invalid_certificate), do: "The server's certificate could not be decoded"
+  defp describe_error({:connection_failed, reason}), do: "Connection failed: #{reason}"
 
-  defp print_help do
-    IO.puts("""
-    SSL Certificate Checker
+  defp describe_error({:tls_handshake_failed, message}),
+    do: "TLS handshake failed: #{String.trim(message)}"
 
-    Usage:
-      ssl_certificate_checker <host> [port] [options]
+  defp usage do
+    """
+    Usage: ssl_certificate_checker <host> [port] [options]
 
-    Arguments:
-      host          The hostname to check (required)
-      port          The port number (default: 443)
+    Checks the TLS certificate presented by <host> (port 443 by default): trusted chain,
+    host name match, and validity period.
 
     Options:
-      --json        Output in JSON format
-      --verbose     Verbose output
-      -h, --help    Show this help message
+      --json            Print a single JSON object, for results and errors alike
+      --timeout <ms>    Connection and handshake timeout (default: 10000)
+      --cacert <file>   Trust the CA certificates in a PEM file instead of the
+                        system store; may be repeated
+      -h, --help        Show this help
 
     Examples:
       ssl_certificate_checker google.com
-      ssl_certificate_checker example.com 8443
-      ssl_certificate_checker google.com 443 --json
+      ssl_certificate_checker example.com 8443 --json
+      ssl_certificate_checker internal.example --cacert internal-ca.pem
 
-    Exit Codes:
-      0  - Certificate is valid
-      1  - Error occurred during check
-      2  - Certificate is invalid or expired
-    """)
+    Exit codes:
+      0  Certificate is valid
+      1  Check could not be completed (invalid arguments, network or TLS error)
+      2  Certificate was retrieved but failed verification
+    """
   end
 end
